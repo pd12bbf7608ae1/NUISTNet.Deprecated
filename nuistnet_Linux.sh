@@ -18,7 +18,9 @@
 
 username='123456789'
 password='000000'
-isp='CMCC' # 移动 CMCC 联通Unicom 电信 ChinaNet 南信大 NUIST
+isp='CMCC'
+# 移动 CMCC 联通Unicom 电信 ChinaNet 南信大 NUIST
+
 password=$(echo -n "$password" | base64 -w 0)
 
 loginServer='a.nuist.edu.cn'
