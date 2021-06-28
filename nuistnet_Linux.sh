@@ -31,12 +31,14 @@ statusUrl="http://${loginServer}/index.php/index/init"
 userAgent="Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/84.0.4147.105 Safari/537.36"
 
 show_help() {
-    printf "南信大校园网络自动脚本\n脚本依赖于bash环境以及curl工具。\n使用前需要修改脚本开头的相关参数。\n用法：\nnuistnet.sh\t\t检测网络并尝试登陆\nnuistnet.sh login\t强制执行登陆\nnuistnet.sh logout\t强制注销\nnuistnet.sh status\t显示登陆信息\nnuistnet.sh help\t显示帮助\n\n脚本可能由于用户环境不同而无法使用，本人不保证脚本的可用性以及对使用该脚本造成的任何后果负责。\n"
+    printf "南信大校园网络自动脚本\n脚本依赖于bash环境以及curl工具。\n使用前需要修改脚本开头的相关参数。\n用法：\nnuistnet.sh\t\t检测网络 并尝试登陆\nnuistnet.sh login\t强制执行登陆\nnuistnet.sh logout\t强制注销\nnuistnet.sh status\t显示登陆信息\nnuistnet.sh help\t显示帮助\n\n脚本可能由于用户环境不同而无法使用，本人不保证脚本的可用性以及对使用该脚本造成的任何后果负责。\n"
+
     return 0
 }
 
 check_alidns() {
     ping -c 2 223.5.5.5 > /dev/null 2>/dev/null
+    # ping -c 2 223.1.1.1 > /dev/null 2>/dev/null
     return $?
 }
 
@@ -102,69 +104,6 @@ login() {  # 返回2 无法获取信息（网络中断） 1 成功 0 失败
     fi
 }
 
-check_and_login() {
-
-    echo "测试网络通断..."
-    check_alidns
-    if [[ "$?" -eq "0" ]]; then
-        echo "已经联网，退出。"
-        exit 0
-    fi
-
-    echo "网络断开，尝试连接登录服务器..."
-    check_loginServer
-    if [[ "$?" -ne "0" ]]; then
-        echo "登录服务器无法连接，退出。"
-        exit 0
-    fi
-
-    check_loginStatus
-    if [[ "$?" -ne "0" ]]; then
-        case "${status}" in
-            "2")
-                echo "登录服务器可能宕机，请稍后再试。"
-                ;;
-            "1")
-                echo "登录服务器显示已经登录，网络可能不稳定。"
-                echo "登录信息："
-                printf "账户：\t${logoutUsername}\nISP：\t${logoutDomain}\nIP：\t${logoutIp}\n地点：\t${logoutLocation}\n时长：\t${logoutTimer}s\n"
-                echo "放弃登录。"
-                ;;
-        esac
-        exit 0
-    fi
-
-    echo "进行登录..."
-    login
-    if [[ "$?" -ne "1" ]]; then
-        case "${status}" in
-            "2")
-                echo "登录服务器可能宕机，请稍后再试。"
-                ;;
-            "0")
-                echo "登录失败。"
-                printf "信息：\t${info}\n"
-                if [[ "$info" == "Limit Users Err" ]]; then
-                    printf "翻译：\t用户数目达到上限，请登出其他设备。\n"
-                fi
-
-                if [[ "$info" == "UserName_Err" ]]; then
-                    printf "翻译：\t用户名错误。\n"
-                fi
-
-                if [[ "$info" == "Passwd_Err" ]]; then
-                    printf "翻译：\t密码错误。\n"
-                fi
-                ;;
-        esac
-        exit 0
-    fi
-
-    echo "登录成功！"
-    printf "账户：\t${logoutUsername}\nISP：\t${logoutDomain}\nIP：\t${logoutIp}\n地点：\t${logoutLocation}\n"
-    return 0
-}
-
 force_login() {
     echo "强制登录..."
     login
@@ -214,6 +153,92 @@ force_logout() {
     fi
     echo "登出成功"
     printf "信息：\t${info}\n"
+    return 0
+}
+
+check_and_login() {
+
+    echo "测试网络通断..."
+    check_alidns
+    if [[ "$?" -eq "0" ]]; then
+        if [[ -e "$retry_file" ]]; then
+            rm "$retry_file"
+            echo "删除临时文件"
+        fi
+        echo "已经联网，退出。"
+        exit 0
+    fi
+
+    echo "网络断开，尝试连接登录服务器..."
+    check_loginServer
+    if [[ "$?" -ne "0" ]]; then
+        echo "登录服务器无法连接，退出。"
+        if [[ -e "$retry_file" ]]; then
+            rm "$retry_file"
+            echo "删除临时文件"
+        fi
+        exit 0
+    fi
+
+    check_loginStatus
+    if [[ "$?" -ne "0" ]]; then
+        if [[ -e "$retry_file" ]]; then
+            retry=$(cat "$retry_file")
+        else
+            retry=0
+        fi
+        case "${status}" in
+            "2")
+                echo "登录服务器可能宕机，请稍后再试。"
+                ;;
+            "1")
+                
+                echo "登录服务器显示已经登录，网络可能不稳定。"
+                echo "登录信息："
+                printf "账户：\t${logoutUsername}\nISP：\t${logoutDomain}\nIP：\t${logoutIp}\n地点：\t${logoutLocation}\n时长：\t${logoutTimer}s\n"
+                echo "放弃登录。"
+                ;;
+        esac
+        retry=$((retry+1)) # 重试次数加1
+        if [[ "$retry" -eq "$retry_limit" ]]; then # 重试过多，
+            echo "尝试退出后登陆"
+            rm "$retry_file"
+            force_logout
+            force_login
+        else
+            echo "$retry" > "$retry_file"
+        fi
+        exit 0
+    fi
+
+    echo "进行登录..."
+    login
+    if [[ "$?" -ne "1" ]]; then
+        case "${status}" in
+            "2")
+                echo "登录服务器可能宕机，请稍后再试。"
+                ;;
+            "0")
+                echo "登录失败。"
+                printf "信息：\t${info}\n"
+                if [[ "$info" == "Limit Users Err" ]]; then
+                    printf "翻译：\t用户数目达到上限，请登出其他设备。\n"
+                fi
+
+                if [[ "$info" == "UserName_Err" ]]; then
+                    printf "翻译：\t用户名错误。\n"
+                fi
+
+                if [[ "$info" == "Passwd_Err" ]]; then
+                    printf "翻译：\t密码错误。\n"
+                fi
+                ;;
+        esac
+        exit 0
+    fi
+
+    echo "登录成功！"
+    printf "账户：\t${logoutUsername}\nISP：\t${logoutDomain}\nIP：\t${logoutIp}\n地点：\t${logoutLocation}\n"
     return 0
 }
 
